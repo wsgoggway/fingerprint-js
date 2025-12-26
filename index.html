@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Browser Fingerprint</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .result-container {
+            background: #f5f5f5;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            border: 1px solid #ddd;
+        }
+        .hash {
+            font-family: monospace;
+            background: #e8f5e9;
+            padding: 10px;
+            border-radius: 4px;
+            font-weight: bold;
+            color: #2e7d32;
+            word-break: break-all;
+        }
+        .json {
+            font-family: monospace;
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 4px;
+            max-height: 300px;
+            overflow: auto;
+            white-space: pre-wrap;
+        }
+        button {
+            background: #2196f3;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 0;
+        }
+        button:hover {
+            background: #1976d2;
+        }
+    </style>
+</head>
+<body>
+    <button onclick="generateFingerprint()">Сгенерировать фингерпринт</button>
+
+    <div class="result-container">
+        <h2>Собранные данные (JSON):</h2>
+        <pre id="jsonData" class="json">Нажмите кнопку для генерации...</pre>
+    </div>
+
+    <div class="result-container">
+        <h2>Хеш от данных:</h2>
+        <div id="hashResult" class="hash">Нажмите кнопку для генерации...</div>
+    </div>
+
+    <script>
+        function simpleHash(str) {
+            let hash = 0;
+            if (str.length === 0) return hash.toString(16);
+            
+            for (let i = 0; i < str.length; i++) {
+                const char = str.charCodeAt(i);
+                hash = ((hash << 5) - hash) + char;
+                hash = hash & hash;
+            }
+            return Math.abs(hash).toString(16).padStart(16, '0');
+        }
+
+        async function cryptoHash(str) {
+            if (window.crypto && window.crypto.subtle) {
+                try {
+                    const encoder = new TextEncoder();
+                    const data = encoder.encode(str);
+                    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+                    const hashArray = Array.from(new Uint8Array(hashBuffer));
+                    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+                } catch (e) {
+                    console.warn('Crypto API unavailable, use the fallback:', e);
+                    return simpleHash(str);
+                }
+            }
+            return simpleHash(str);
+        }
+
+	async function getCanvasFingerprint() {
+	  const canvas = document.createElement('canvas');
+	  const ctx = canvas.getContext('2d');
+
+	  canvas.width = 2000; 
+	  canvas.height = 600;
+
+	  ctx.textBaseline = 'alphabetic'; 
+	  ctx.fillStyle = '#f60';          
+	  ctx.fillRect(125, 1, 62, 20);   
+
+	  ctx.fillStyle = '#069';
+	  ctx.font = '36pt Arial';         
+	  ctx.fillText('Hello, world!', 2, 15);
+
+	  ctx.fillStyle = 'rgba(102, 204, 0, 0.7)';
+	  ctx.font = '28pt Times New Roman'; 
+	  ctx.fillText('Canvas fingerprinting', 4, 45);
+
+	  const gradient = ctx.createLinearGradient(0, 0, canvas.width, 0);
+	  gradient.addColorStop(0, '#ff0000');
+	  gradient.addColorStop(0.5, '#00ff00');
+	  gradient.addColorStop(1, '#0000ff');
+	  ctx.fillStyle = gradient;
+	  ctx.fillRect(10, 70, 180, 30);
+
+	  ctx.rotate(0.1);
+	  ctx.fillStyle = '#333';
+	  ctx.font = '24pt Verdana';
+	  ctx.fillText('Rotated text', 20, 100);
+
+	  const imageData = canvas.toDataURL();
+
+	return {data: imageData, hash: await cryptoHash(imageData, "SHA-256")};
+	}
+
+        function getWebGLFingerprint() {
+            const canvas = document.createElement('canvas');
+            let gl;
+            let debugInfo;
+            let renderer = '';
+            let vendor = '';
+            
+            try {
+                gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+                if (gl) {
+                    debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                    if (debugInfo) {
+                        renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+                        vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+                    }
+                }
+            } catch (e) {
+                console.warn('WebGL unavailable:', e);
+            }
+            
+            return {
+                renderer: renderer || 'not available',
+                vendor: vendor || 'not available',
+                maxTextureSize: gl ? gl.getParameter(gl.MAX_TEXTURE_SIZE) : 'unknown'
+            };
+        }
+
+        function getAudioFingerprint() {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                const analyser = audioCtx.createAnalyser();
+                oscillator.connect(analyser);
+                oscillator.start();
+
+                const dataArray = new Float32Array(analyser.frequencyBinCount);
+                analyser.getFloatTimeDomainData(dataArray);
+
+                return Array.from(dataArray).slice(0, 10).join(',');
+            } catch (e) {
+                console.warn('Audio API unavailable:', e);
+                return 'not available';
+            }
+        }
+
+        async function generateFingerprint() {
+            try {
+                const fingerprintData = {
+                    browser: {
+                        userAgent: navigator.userAgent,
+                        language: navigator.language,
+                        platform: navigator.platform,
+                        doNotTrack: navigator.doNotTrack || 'unknown',
+                        hardwareConcurrency: navigator.hardwareConcurrency || 'unknown',
+                        deviceMemory: navigator.deviceMemory || 'unknown'
+                    },
+                    screen: {
+                        width: screen.width,
+                        height: screen.height,
+                        colorDepth: screen.colorDepth,
+                        pixelDepth: screen.pixelDepth,
+                        availWidth: screen.availWidth,
+                        availHeight: screen.availHeight
+                    },
+                    timezone: {
+                        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                        offset: new Date().getTimezoneOffset()
+                    },
+                    plugins: {
+                        count: navigator.plugins.length,
+                        names: Array.from(navigator.plugins).map(plugin => plugin.name)
+                    },
+                    mimeTypes: {
+                        count: navigator.mimeTypes.length,
+                        types: Array.from(navigator.mimeTypes).map(mime => mime.type)
+                    },
+                    canvas: {
+                        fingerprint: await getCanvasFingerprint()
+                    },
+                    webgl: getWebGLFingerprint(),
+                    audio: {
+                        fingerprint: getAudioFingerprint()
+                    },
+                    fonts: {
+                        detected: detectFonts()
+                    }
+                };
+
+                const jsonString = JSON.stringify(fingerprintData, null, 2);
+                document.getElementById('jsonData').textContent = jsonString;
+                
+                const hash = await cryptoHash(jsonString);
+                document.getElementById('hashResult').textContent = hash;
+                
+                console.log(fingerprintData);
+                console.log(hash);
+            } catch (error) {
+                console.error('Ошибка при генерации фингерпринта:', error);
+                document.getElementById('hashResult').textContent = 'Ошибка: ' + error.message;
+            }
+        }
+
+        function detectFonts() {
+            const baseFonts = ['monospace', 'sans-serif', 'serif'];
+            const testString = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+            const testSize = '72px';
+            
+            const container = document.createElement('div');
+            container.style.position = 'absolute';
+            container.style.left = '-9999px';
+            document.body.appendChild(container);
+            
+            const getFontWidth = (fontFamily) => {
+                const element = document.createElement('span');
+                element.style.fontFamily = fontFamily;
+                element.style.fontSize = testSize;
+                element.innerHTML = testString;
+                container.appendChild(element);
+                const width = element.offsetWidth;
+                container.removeChild(element);
+                return width;
+            };
+            
+            const defaultWidths = {};
+            baseFonts.forEach(font => {
+                defaultWidths[font] = getFontWidth(font);
+            });
+            
+            const fontsToCheck = [
+                'Arial', 'Verdana', 'Times New Roman', 'Courier New', 
+                'Comic Sans MS', 'Impact', 'Georgia', 'Tahoma', 'Trebuchet MS'
+            ];
+            
+            const availableFonts = [];
+            
+            fontsToCheck.forEach(font => {
+                const width = getFontWidth(font + ',sans-serif');
+                if (width !== defaultWidths['sans-serif']) {
+                    availableFonts.push(font);
+                }
+            });
+            
+            document.body.removeChild(container);
+            return availableFonts;
+        }
+    </script>
+</body>
+</html>
